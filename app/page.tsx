@@ -17,6 +17,7 @@ import { Command, CommandEmpty, CommandGroup, CommandInput, CommandItem, Command
 import { toast } from "sonner"
 import { it } from "date-fns/locale"
 import { createClient } from "@/lib/supabase/client"
+import { GeminiChatbot } from "@/components/gemini-chatbot"
 
 interface Turno {
   id: string
@@ -28,6 +29,7 @@ interface Turno {
   stato: string
   note: string
   attivita?: string
+  _originalOperatore?: string
 }
 
 const TurniManagement = () => {
@@ -124,6 +126,7 @@ const TurniManagement = () => {
   const [editingPrevTurnoId, setEditingPrevTurnoId] = useState<string | null>(null)
   const [selectedPrevTurniIds, setSelectedPrevTurniIds] = useState<Set<string>>(new Set())
   const [isSelectMode, setIsSelectMode] = useState(false)
+  const [alreadyUsedOperatori, setAlreadyUsedOperatori] = useState<Set<string>>(new Set())
 
   const formatTime = (time: string) => {
     if (!time) return ""
@@ -504,18 +507,24 @@ const TurniManagement = () => {
         return
       }
 
-      // Exclude operators already present in today's turni
+      // Track which operators are already in today's turni (for UI display)
       const todayOperatori = new Set(turni.map((t) => t.operatore))
-      const filtered = data.filter((t: Turno) => !todayOperatori.has(t.operatore))
+      setAlreadyUsedOperatori(todayOperatori)
 
-      if (filtered.length === 0) {
-        toast.error("Tutti gli operatori del giorno precedente sono già presenti per questa data")
-        return
-      }
-
-      const loaded = filtered.map((t: Turno) => ({ ...t, operatore: "" }))
+      // Show ALL prev-day turni; for rows whose operator is already used, keep their name locked
+      const loaded = data.map((t: Turno) => ({
+        ...t,
+        _originalOperatore: t.operatore,
+        operatore: t.operatore, // keep original; locked ones won't be editable
+      }))
       setPrevDayTurni(loaded)
-      setSelectedPrevTurniIds(new Set(loaded.map((t: Turno) => t.id)))
+      // Pre-select only turni whose original operator is NOT already in today
+      const selectableIds = new Set<string>(
+        loaded
+          .filter((t: Turno) => !todayOperatori.has(t._originalOperatore!))
+          .map((t: Turno) => t.id)
+      )
+      setSelectedPrevTurniIds(selectableIds)
       setIsSelectMode(false)
       setCopyFromPrevModalOpen(true)
     } catch (error) {
@@ -1592,6 +1601,7 @@ if (status === "ferie") {
                         setEditingPrevTurnoId(null)
                         setSelectedPrevTurniIds(new Set())
                         setIsSelectMode(false)
+                        setAlreadyUsedOperatori(new Set())
                       }}
                     >
                       <X className="w-5 h-5" />
@@ -1609,7 +1619,7 @@ if (status === "ferie") {
               <div className="flex items-center justify-between mb-3 px-1">
                 <span className="text-sm text-muted-foreground">
                   {isSelectMode
-                    ? `${selectedPrevTurniIds.size} di ${prevDayTurni.length} selezionati`
+                    ? `${selectedPrevTurniIds.size} di ${prevDayTurni.filter(t => !alreadyUsedOperatori.has(t._originalOperatore ?? "")).length} selezionabili`
                     : `${prevDayTurni.length} turni trovati`}
                 </span>
                 <Button
@@ -1618,8 +1628,12 @@ if (status === "ferie") {
                   className="h-7 text-xs"
                   onClick={() => {
                     if (isSelectMode) {
-                      // Annulla: torna a tutti selezionati
-                      setSelectedPrevTurniIds(new Set(prevDayTurni.map(t => t.id)))
+                      // Annulla: torna a tutti i selezionabili selezionati
+                      setSelectedPrevTurniIds(new Set(
+                        prevDayTurni
+                          .filter(t => !alreadyUsedOperatori.has(t._originalOperatore ?? ""))
+                          .map(t => t.id)
+                      ))
                       setIsSelectMode(false)
                     } else {
                       // Entra in modalità selezione: deseleziona tutto
@@ -1633,15 +1647,17 @@ if (status === "ferie") {
               </div>
               <div className="max-h-[50vh] overflow-y-auto space-y-3 mb-4 pr-1">
                 {prevDayTurni.map((t) => {
+                  const isAlreadyUsed = alreadyUsedOperatori.has(t._originalOperatore ?? "")
                   const isSelected = selectedPrevTurniIds.has(t.id)
-                  const cardClass = isSelectMode
+                  const cardClass = isAlreadyUsed
+                    ? "border-border bg-muted/40 opacity-70 cursor-not-allowed"
+                    : isSelectMode
                     ? isSelected
                       ? "border-border bg-lime-200/30 cursor-pointer"
                       : "border-border bg-card cursor-pointer"
                     : "border-border bg-card cursor-default"
 
-                  // Operatori già assegnati negli altri turni:
-                  // in select mode solo quelli selezionati, altrimenti tutti
+                  // Operatori già assegnati negli altri turni (in-modal duplicates):
                   const assignedOperatori = prevDayTurni
                     .filter(p => p.id !== t.id && p.operatore && (!isSelectMode || selectedPrevTurniIds.has(p.id)))
                     .map(p => p.operatore)
@@ -1651,7 +1667,7 @@ if (status === "ferie") {
                       key={t.id}
                       className={`rounded-xl border text-sm overflow-hidden transition-all ${cardClass}`}
                       onClick={() => {
-                        if (!isSelectMode) return
+                        if (isAlreadyUsed || !isSelectMode) return
                         setSelectedPrevTurniIds(prev => {
                           const next = new Set(prev)
                           if (next.has(t.id)) next.delete(t.id)
@@ -1664,6 +1680,7 @@ if (status === "ferie") {
                       <div
                         className="px-3 pt-3 pb-2 border-b bg-muted/30"
                         onClick={(e) => {
+                          if (isAlreadyUsed) { e.stopPropagation(); return }
                           if (isSelectMode && !isSelected) {
                             e.stopPropagation()
                             setSelectedPrevTurniIds(prev => {
@@ -1676,6 +1693,14 @@ if (status === "ferie") {
                           }
                         }}
                       >
+                        {isAlreadyUsed ? (
+                          <div className="flex items-center gap-2 h-8 px-1">
+                            <span className="font-medium text-sm flex-1">{t._originalOperatore}</span>
+                            <Badge variant="secondary" className="text-xs shrink-0 bg-orange-100 text-orange-800 border-orange-200">
+                              Già in turno
+                            </Badge>
+                          </div>
+                        ) : (
                         <Select
                           value={t.operatore || "none"}
                           onValueChange={(val) => setPrevDayTurni(prev => prev.map(p => p.id === t.id ? { ...p, operatore: val === "none" ? "" : val } : p))}
@@ -1692,15 +1717,19 @@ if (status === "ferie") {
                           <SelectContent>
                             <SelectItem value="none">— Nessun operatore —</SelectItem>
                             {operatori.map((op) => (
-                              <SelectItem key={op} value={op}>
+                              <SelectItem key={op} value={op} disabled={alreadyUsedOperatori.has(op)}>
                                 <div className="flex items-center gap-2">
                                   <Check className={`w-3 h-3 shrink-0 ${assignedOperatori.includes(op) ? "opacity-100 text-primary" : "opacity-0"}`} />
                                   {op}
+                                  {alreadyUsedOperatori.has(op) && (
+                                    <span className="text-xs text-muted-foreground ml-auto">(già usato)</span>
+                                  )}
                                 </div>
                               </SelectItem>
                             ))}
                           </SelectContent>
                         </Select>
+                        )}
                       </div>
                       {/* Dettagli attività */}
                       <div className="p-3 space-y-1">
@@ -1739,6 +1768,7 @@ if (status === "ferie") {
                     setEditingPrevTurnoId(null)
                     setSelectedPrevTurniIds(new Set())
                     setIsSelectMode(false)
+                    setAlreadyUsedOperatori(new Set())
                   }}
                   className="flex-1"
                   disabled={isCopyingFromPrev}
@@ -1753,12 +1783,23 @@ if (status === "ferie") {
                   <CopyCheck className="w-4 h-4" />
                   {isCopyingFromPrev
                     ? `Copiando ${selectedPrevTurniIds.size}...`
-                    : `Copia ${selectedPrevTurniIds.size} / ${prevDayTurni.length}`}
+                    : `Copia ${selectedPrevTurniIds.size} / ${prevDayTurni.filter(t => !alreadyUsedOperatori.has(t._originalOperatore ?? "")).length}`}
                 </Button>
               </div>
             </CardContent>
           </Card>
         </div>
+      )}
+
+      {isAuthenticated && (
+        <GeminiChatbot
+          turni={turni}
+          selectedDate={selectedDate}
+          onTurniInserted={() => {
+            loadDataFromSupabase()
+            loadExistingOperatori()
+          }}
+        />
       )}
 
       {deleteModalOpen && (

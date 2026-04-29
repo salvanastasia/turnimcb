@@ -36,9 +36,9 @@ Gli stati possibili per un turno sono: attivo, malattia, ferie, permesso.
 
 Quando l'utente vuole inserire uno o più turni, rispondi con:
 1. Una breve conferma testuale di cosa stai per creare
-2. Un blocco JSON con il seguente formato ESATTO (includi il blocco tra ```json e ```):
+2. Un blocco JSON con il seguente formato ESATTO (includi il blocco tra JSONSTART e JSONEND):
 
-\`\`\`json
+JSONSTART
 {
   "action": "create_turni",
   "turni": [
@@ -46,14 +46,14 @@ Quando l'utente vuole inserire uno o più turni, rispondi con:
       "operatore": "Nome Cognome",
       "da_ore": "HH:MM",
       "a_ore": "HH:MM",
-      "attivita": "descrizione attività",
+      "attivita": "descrizione attivita",
       "cella": "B1",
       "stato": "attivo",
       "note": ""
     }
   ]
 }
-\`\`\`
+JSONEND
 
 Se l'utente fa domande sui turni esistenti o vuole analisi, rispondi in linguaggio naturale senza blocco JSON.
 Se l'utente vuole modificare o eliminare turni esistenti, spiega che per ora puoi solo creare nuovi turni.

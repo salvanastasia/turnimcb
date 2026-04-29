@@ -44,7 +44,10 @@ interface GeminiChatbotProps {
 }
 
 function parseProposedTurni(text: string): ProposedTurno[] | null {
-  const match = text.match(/```json\s*([\s\S]*?)```/)
+  // Support both JSONSTART/JSONEND and ```json``` delimiters
+  const match =
+    text.match(/JSONSTART\s*([\s\S]*?)\s*JSONEND/) ||
+    text.match(/```json\s*([\s\S]*?)```/)
   if (!match) return null
   try {
     const parsed = JSON.parse(match[1])
@@ -58,7 +61,10 @@ function parseProposedTurni(text: string): ProposedTurno[] | null {
 }
 
 function cleanText(text: string): string {
-  return text.replace(/```json[\s\S]*?```/g, "").trim()
+  return text
+    .replace(/JSONSTART[\s\S]*?JSONEND/g, "")
+    .replace(/```json[\s\S]*?```/g, "")
+    .trim()
 }
 
 function formatTurnoForContext(t: Turno): string {
@@ -72,10 +78,17 @@ export function GeminiChatbot({ turni, selectedDate, onTurniInserted }: GeminiCh
   const [isLoading, setIsLoading] = useState(false)
   const [isRecording, setIsRecording] = useState(false)
   const [usedModel, setUsedModel] = useState("")
+  const [voiceSupported, setVoiceSupported] = useState(false)
   const messagesEndRef = useRef<HTMLDivElement>(null)
   const textareaRef = useRef<HTMLTextAreaElement>(null)
-  const mediaRecorderRef = useRef<MediaRecorder | null>(null)
-  const chunksRef = useRef<Blob[]>([])
+  const recognitionRef = useRef<any>(null)
+
+  useEffect(() => {
+    setVoiceSupported(
+      typeof window !== "undefined" &&
+        ("SpeechRecognition" in window || "webkitSpeechRecognition" in window)
+    )
+  }, [])
 
   useEffect(() => {
     if (isOpen && messages.length === 0) {
@@ -222,38 +235,42 @@ export function GeminiChatbot({ turni, selectedDate, onTurniInserted }: GeminiCh
     ])
   }
 
-  const startRecording = async () => {
-    try {
-      const stream = await navigator.mediaDevices.getUserMedia({ audio: true })
-      const mediaRecorder = new MediaRecorder(stream)
-      mediaRecorderRef.current = mediaRecorder
-      chunksRef.current = []
-
-      mediaRecorder.ondataavailable = (e) => {
-        if (e.data.size > 0) chunksRef.current.push(e.data)
-      }
-
-      mediaRecorder.onstop = async () => {
-        stream.getTracks().forEach((t) => t.stop())
-        const blob = new Blob(chunksRef.current, { type: "audio/webm" })
-        await transcribeAudio(blob)
-      }
-
-      mediaRecorder.start()
-      setIsRecording(true)
-    } catch (err) {
-      toast.error("Impossibile accedere al microfono")
+  const startRecording = () => {
+    const SpeechRecognition =
+      (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition
+    if (!SpeechRecognition) {
+      toast.error("Riconoscimento vocale non supportato dal browser")
+      return
     }
+
+    const recognition = new SpeechRecognition()
+    recognition.lang = "it-IT"
+    recognition.interimResults = false
+    recognition.maxAlternatives = 1
+
+    recognition.onresult = (e: any) => {
+      const transcript = e.results[0][0].transcript
+      setInput((prev) => (prev ? prev + " " + transcript : transcript))
+      setIsRecording(false)
+    }
+
+    recognition.onerror = () => {
+      toast.error("Errore nel riconoscimento vocale")
+      setIsRecording(false)
+    }
+
+    recognition.onend = () => {
+      setIsRecording(false)
+    }
+
+    recognitionRef.current = recognition
+    recognition.start()
+    setIsRecording(true)
   }
 
   const stopRecording = () => {
-    mediaRecorderRef.current?.stop()
+    recognitionRef.current?.stop()
     setIsRecording(false)
-  }
-
-  const transcribeAudio = async (blob: Blob) => {
-    // Use Web Speech API as fallback since Gemini audio needs multimodal
-    toast.info("Trascrizione non disponibile in questa versione. Usa il testo.")
   }
 
   const formatTime = (time: string) => time?.slice(0, 5) ?? ""
@@ -382,18 +399,19 @@ export function GeminiChatbot({ turni, selectedDate, onTurniInserted }: GeminiCh
             className="flex-1 resize-none min-h-[36px] max-h-[100px] text-sm py-2 leading-relaxed"
             disabled={isLoading}
           />
-          <button
-            onClick={isRecording ? stopRecording : startRecording}
-            className={`w-9 h-9 rounded-full flex items-center justify-center shrink-0 transition-colors ${
-              isRecording
-                ? "bg-destructive text-destructive-foreground"
-                : "bg-muted text-muted-foreground hover:bg-muted/80"
-            }`}
-            aria-label={isRecording ? "Stop registrazione" : "Registra vocale"}
-            title="Funzionalità vocale (in sviluppo)"
-          >
-            {isRecording ? <MicOff className="w-4 h-4" /> : <Mic className="w-4 h-4" />}
-          </button>
+          {voiceSupported && (
+            <button
+              onClick={isRecording ? stopRecording : startRecording}
+              className={`w-9 h-9 rounded-full flex items-center justify-center shrink-0 transition-colors ${
+                isRecording
+                  ? "bg-destructive text-destructive-foreground animate-pulse"
+                  : "bg-muted text-muted-foreground hover:bg-muted/80"
+              }`}
+              aria-label={isRecording ? "Stop registrazione" : "Registra vocale"}
+            >
+              {isRecording ? <MicOff className="w-4 h-4" /> : <Mic className="w-4 h-4" />}
+            </button>
+          )}
           <button
             onClick={() => sendMessage(input)}
             disabled={!input.trim() || isLoading}

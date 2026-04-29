@@ -504,7 +504,16 @@ const TurniManagement = () => {
         return
       }
 
-      const loaded = data.map((t: Turno) => ({ ...t, operatore: "" }))
+      // Exclude operators already present in today's turni
+      const todayOperatori = new Set(turni.map((t) => t.operatore))
+      const filtered = data.filter((t: Turno) => !todayOperatori.has(t.operatore))
+
+      if (filtered.length === 0) {
+        toast.error("Tutti gli operatori del giorno precedente sono già presenti per questa data")
+        return
+      }
+
+      const loaded = filtered.map((t: Turno) => ({ ...t, operatore: "" }))
       setPrevDayTurni(loaded)
       setSelectedPrevTurniIds(new Set(loaded.map((t: Turno) => t.id)))
       setIsSelectMode(false)
@@ -1135,7 +1144,7 @@ if (status === "ferie") {
                       </DropdownMenuItem>
                     </DropdownMenuContent>
                   </DropdownMenu>
-                  {`${selectedDate.getFullYear()}-${String(selectedDate.getMonth() + 1).padStart(2, "0")}-${String(selectedDate.getDate()).padStart(2, "0")}` > getTodayString() && turni.length === 0 && (
+                  {`${selectedDate.getFullYear()}-${String(selectedDate.getMonth() + 1).padStart(2, "0")}-${String(selectedDate.getDate()).padStart(2, "0")}` > getTodayString() && (
                     <Button
                       variant="outline"
                       onClick={openCopyFromPrevModal}
@@ -1159,7 +1168,7 @@ if (status === "ferie") {
               </div>
               {/* Riga 2 mobile: Copia da ieri + Nuovo Turno */}
               <div className="flex gap-2 md:hidden">
-                {`${selectedDate.getFullYear()}-${String(selectedDate.getMonth() + 1).padStart(2, "0")}-${String(selectedDate.getDate()).padStart(2, "0")}` > getTodayString() && turni.length === 0 && (
+                {`${selectedDate.getFullYear()}-${String(selectedDate.getMonth() + 1).padStart(2, "0")}-${String(selectedDate.getDate()).padStart(2, "0")}` > getTodayString() && (
                   <Button
                     variant="outline"
                     onClick={openCopyFromPrevModal}
